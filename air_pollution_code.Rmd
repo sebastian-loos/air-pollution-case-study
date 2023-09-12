@@ -66,7 +66,7 @@ pm |>
   distinct(state) 
 ```
 
-Notice how there is a column called n_missing about the number of values that are missing. Our data is comlete:)
+Notice how there is a column called n_missing about the number of values that are missing. Our data is comlete:)
 
 We can see that there are 49 states represented in the data (n_unique)
 
@@ -145,7 +145,7 @@ simple_rec |>
   step_corr(all_predictors(), - CMAQ, - aod)
 ```
 
-remove variables with near-zero variance, which can be done with the step_nzv() function.
+remove variables with near-zero variance, which can be done with the step_nzv() function.
 
 ```{r}
 simple_rec |>
@@ -164,6 +164,8 @@ simple_rec <- train_pm |>
   step_nzv(all_predictors(), - CMAQ, - aod)
   
 simple_rec
+
+summary(simple_rec)
 ```
 
 #### Check the preprocessing
@@ -174,14 +176,14 @@ prepped_rec <- prep(simple_rec, verbose = TRUE, retain = TRUE)
 names(prepped_rec)
 ```
 
-Since we retained our preprocessed training data (i.e. prep(retain=TRUE)), we can take a look at it by using the bake() function of the recipes package like this (this previously used the juice() function):
+Since we retained our preprocessed training data (i.e. prep(retain=TRUE)), we can take a look at it by using the bake() function of the recipes package like this (this previously used the juice() function):
 
 ```{r}
 preproc_train <- bake(prepped_rec, new_data = NULL) 
 glimpse(preproc_train)
 ```
 
-Notice that this requires the new_data = NULL argument when we are using the training data.
+Notice that this requires the new_data = NULL argument when we are using the training data.
 
 We now only have 37 variables instead of 50 and no longer categorical variables.
 
@@ -236,6 +238,17 @@ pm_split
 
 train_pm <- training(pm_split)
 test_pm <-testing(pm_split)
+```
+
+#### Step 1.2 Split training set into cross validation sets
+
+```{r}
+set.seed(1234)
+
+vfold_pm <- rsample::vfold_cv(data = train_pm, v = 10)
+vfold_pm
+
+pull(vfold_pm, splits)
 ```
 
 ### Step 2: Create recipe with recipe()
@@ -319,8 +332,6 @@ wflowoutput <- PM_wflow_fit |>
   broom::tidy()
 
 wflowoutput
-
-wf_fit_PM$fit$variable.importance
 ```
 
 We have fit our model on our training data, which means we have created a model to predict values of air pollution based on the predictors that we have included. Yay!
@@ -333,17 +344,19 @@ PM_wflow_fit %>%
   vip(num_features = 10)
 ```
 
-### Step 5.2: Fit workflow with cross validation (not done)
+### Step 5.2: Fit workflow with cross validation
 
 ```{r}
-# set.seed(122)
-# resample_fit <- tune::fit_resamples(prod_comp_wflow, vfold_complaints)
+set.seed(122)
+resample_fit <- tune::fit_resamples(PM_wflow, vfold_pm)
+resample_fit
+
 ```
 
 ### Step 5.3: Fit workflow with tuning (not done)
 
 ```{r}
-# reasmple_fit <-tune::tune_grid(prod_comp_wflow_tune, resamples = vfold_complaints, grid = 4)
+# reasmple_fit <- tune::tune_grid(prod_comp_wflow_tune, resamples = vfold_complaints, grid = 4)
 # 
 # tune::collect_metrics(resample_fit)
 # 
@@ -398,42 +411,31 @@ wf_fitted_values %>%
   ylab("predicted outcome values")
 ```
 
+### Step 7.1: Quantifying Model Performance (unnecessary)
 
-
+Here we see the RMSE in addition to the RSQ or the R squared value
 
 ```{r}
-pred_products <- predict(prod_comp_wflow_fit, new_data = train_pm)
+yardstick::metrics(wf_fitted_values, 
+                   truth = value, estimate = .fitted)
 
-
-yardstick::accuracy(train_pm, 
-                truth = product, estimate = pred_products$.pred_class)
-
-count(train_pm, product)
-count(pred_products, .pred_class)
-
-predicted_and_truth <- bind_cols(train_pm, 
-        predicted_products = pull(pred_products, .pred_class))
-
-head(predicted_and_truth)
-
-filter(predicted_and_truth, product != predicted_products)
+yardstick::rmse(wf_fitted_values, 
+               truth = value, estimate = .fitted)
 ```
 
+### Step: 7.2: Get performance metrics
+
 ```{r}
-set.seed(122)
-resample_fit <- tune::fit_resamples(prod_comp_wflow, vfold_complaints)
-
-resample_fit
-
 collect_metrics(resample_fit)
 ```
 
-```{r}
-final_workflow <- finalize_workflow(my_wf, my_best_model)
-final_model <- fit(final_workflow, my_training_data)
-my_results <- predict(final_model, my_testing_data )
 
-my_results |> knitr::kable( caption = "My Predictions")
+```{r}
+
+```
+
+```{r}
+
 ```
 
 ### Criteria
@@ -447,159 +449,6 @@ This is NOT giving anything away in terms of the grade. A few people have submit
 But in these projects, the individuals did not take the extra step of fitting their final model to the test data set.
 
 If we are using the Tidymodels framework, and you have earlier chosen your best model *my_best_model* $$see **?show_best** for options$$, then with all due love and respect, your final code block generically might look like this:
-
-```{r}
-
-```
-
-### Frequency matrix
-
-From the exploring of the data, no correlation between the different variables were visible. The most promising way to design the model is to create a matrix with how frequent a given word appears for a given complaint and use it as features for a machine learning algorithm. In the following the matrix is generated.
-
-```{r}
-# reduce sample size
-complaints_train <- complaints_train |> 
-  sample_n(100)
-
-
-complaints_train_id <- complaints_train |> 
-  select(product, "complaint" = consumer_complaint_narrative) |>
-  mutate("complaint" = str_replace_all(complaint, "X{2,4}", ""),
-         "id_complaint" = row_number(), .after = product)
-
-complaints_train_otpdpr <- complaints_train_id |> 
-  unnest_tokens(word, complaint) |> 
-  filter(!word %in% stop_words$word)
-
-complaints_counts <- complaints_train_otpdpr |> 
-  count(word, .by = product, sort = TRUE) |>
-  rename(product = .by) |>
-  cast_dtm(document = product, term = word, value = n) |> 
-  tidy() |> 
-  rename(word = term, product = document, prod_count = count)
-
-count_join <- complaints_counts |>
-  left_join(complaints_train_otpdpr, by = join_by(product, word)) |> 
-  unique()
-
-complaints_simlpe <- complaints_train |>
-  select(!c(consumer_complaint_narrative, zip_code, submitted_via)) |> 
-  mutate("id_complaint" = row_number(), .after = product)
-  
-complaints_joined <- count_join |>
-  left_join(complaints_simlpe, by = join_by(id_complaint, product))
-
-complaints_joined |>
-  pivot_wider(names_from = word, values_from = prod_count)
-```
-
-### Step 1: Data Splitting with rsample
-
-```{r}
-# ensure the split is done the same if code is rerun
-set.seed(1234)
-# split data set into test and training
-split_complaints <- initial_split(complaints_joined, prop = 2/3) 
-split_complaints
-
-# split_complaints <- initial_split(complaints_counts, prop = 2/3) 
-# split_complaints
-```
-
-```{r}
-train_pm <- training(split_complaints)
-head(train_pm)
-count(train_pm, product)
-
-test_pm <-testing(split_complaints)
-head(test_pm)
-count(test_pm, product)
-```
-
-```{r}
-set.seed(1234)
-vfold_complaints <- rsample::vfold_cv(data = train_pm, v = 4)
-vfold_complaints
-
-pull(vfold_complaints, splits)
-```
-
-```{r}
-# Explore one of the folds
-first_fold <-vfold_complaints$splits[[1]]
-head(as.data.frame(first_fold, data = "analysis")) # training set of this fold
-
-head(as.data.frame(first_fold, data = "assessment")) # test set of this fold
-```
-
-### Step 2: Create recipe with recipe()
-
-```{r}
-complaints_recipe <- train_pm |>
-  recipe(product ~ count + company + state) 
-
-complaints_recipe
-
-summary(complaints_recipe)
-```
-
-### Step 3: Specify model, engine, and mode (parsnip)
-
-```{r}
-complaints_model <- 
-  # define Model (Classification And Regression Tree (CART))
-  parsnip::decision_tree() |>
-  # set mode (classification)
-  parsnip::set_mode("classification") |>
-  #set engine (rpart)
-  parsnip::set_engine("rpart")
-
-complaints_model
-
-```
-
-#### Specify hyperparameters to tune (tune())
-
-### Step 4: Create workflow, add recipe, add model
-
-```{r}
-prod_comp_wflow <-workflows::workflow() |>
-           workflows::add_recipe(complaints_recipe) |>
-           workflows::add_model(complaints_model)
-
-prod_comp_wflow
-```
-
-### Step 5.1 Fit workflow with cross validation
-
-```{r}
-prod_comp_wflow_fit <- parsnip::fit(prod_comp_wflow, data = train_pm)
-
-prod_comp_wflow_fit
-
-# store fit
-wf_fit_comp <- prod_comp_wflow_fit |> 
-  pull_workflow_fit()
-
-wf_fit_comp$fit$variable.importance
-```
-
-### Step 5.2: Fit workflow with cross validation
-
-```{r}
-set.seed(122)
-resample_fit <- tune::fit_resamples(prod_comp_wflow, vfold_complaints)
-```
-
-### Step 5.3: Fir workflow with tuning
-
-```{r}
-reasmple_fit <-tune::tune_grid(prod_comp_wflow_tune, resamples = vfold_complaints, grid = 4)
-
-tune::collect_metrics(resample_fit)
-
-tune::show_best(resample_fit, metric = "accuracy")
-```
 
 ### Step 6: Get predictions
 
@@ -637,15 +486,3 @@ my_results <- predict(final_model, my_testing_data )
 
 my_results |> knitr::kable( caption = "My Predictions")
 ```
-
-### Criteria
-
-1.  Does the submission build a machine learning algorithm to classify consumer complaints?
-
-2.  Do the authors describe what they expect the out of sample error to be and estimate the error appropriately with cross-validation?
-
-This is NOT giving anything away in terms of the grade. A few people have submitted final projects which FULLY MET the stated grading criteria. So I gave them full marks.
-
-But in these projects, the individuals did not take the extra step of fitting their final model to the test data set.
-
-If we are using the Tidymodels framework, and you have earlier chosen your best model *my_best_model* $$see **?show_best** for options$$, then with all due love and respect, your final code block generically might look like this:
