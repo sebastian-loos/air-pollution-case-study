@@ -416,7 +416,7 @@ wf_fitted_values %>%
 Here we see the RMSE in addition to the RSQ or the R squared value
 
 ```{r}
-yardstick::metrics(wf_fitted_values, 
+yardstick::metrics(ws, 
                    truth = value, estimate = .fitted)
 
 yardstick::rmse(wf_fitted_values, 
@@ -427,6 +427,8 @@ yardstick::rmse(wf_fitted_values,
 
 ```{r}
 collect_metrics(resample_fit)
+
+show_best(resample_fit, metrics = "accuracy")
 ```
 
 
